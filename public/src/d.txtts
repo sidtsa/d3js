@@ -1,0 +1,1462 @@
+// declare module 'global';
+import React, { useMemo, useState } from 'react';
+import { Canvas } from '@react-three/fiber';
+import { OrbitControls, Text } from '@react-three/drei';
+import * as d3 from 'd3';
+import { BufferGeometry, LineBasicMaterial, Vector3 } from 'three';
+import './ThreeDBarChart.css'; // Import the CSS file for positioning the popup
+
+interface DataPoint {
+  state: string;
+  specialty: string;
+  value: number;
+  value1: string[]; // Array of strings to store multiple values
+  // Add other fields here if necessary
+  [key: string]: any; // For any additional dynamic fields
+}
+
+interface DataPointWithIndex extends DataPoint {
+  index: number;
+}
+
+interface ThreeDBarChartProps {
+  data: DataPoint[];
+  colX: string;
+  colY: string;
+  colZ: string;
+}
+
+const ThreeDBarChart: React.FC<ThreeDBarChartProps> = ({ data, colX, colY, colZ }) => {
+  const [hoveredBar, setHoveredBar] = useState<DataPointWithIndex | null>(null);
+  const [selectedRow, setSelectedRow] = useState<DataPoint | null>(null);
+
+  const isNumeric = (label: string): boolean => !isNaN(Number(label)) && !isNaN(parseFloat(label));
+
+
+  // Check if Y-axis data is numeric
+  const isYAxisNumeric = useMemo(() => {
+    return data.every(d => !isNaN(Number(d[colY])));
+  }, [data, colY]);
+
+  // Compute bar data with Z-axis values based on count of unique values in value1
+  const barData = useMemo(() => {
+    const groupedData = d3.rollup(
+      data,
+      (v) => new Set(v.map((d) => d.value)).size,
+      (d) => d.state,
+      (d) => d.specialty
+    );
+
+    const flattenedData: DataPoint[] = [];
+    for (const [state, specialties] of groupedData) {
+      for (const [specialty, _] of specialties) {
+        const value1 = data
+          .filter(d => d.state === state && d.specialty === specialty)
+          .map(d => d.value1)
+          .flat(); // Flatten array of arrays
+        flattenedData.push({ state, specialty, value: 0, value1 }); // Default value for value is 0
+      }
+    }
+    return flattenedData;
+  }, [data]);
+
+  // X-axis Data: sortedStates
+  const sortedStates = useMemo(() => {
+    const states = Array.from(d3.rollup(data, (v) => d3.sum(v, (d) => d.value), (d) => d.state))
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 5)
+      .map((d) => d[0]);
+    console.log('X-axis (states):', states);
+    return states;
+  }, [data]);
+
+  const topStateData = barData.filter((d) => sortedStates.includes(d.state));
+
+  // Y-axis Data: sortedSpecialties
+  const sortedSpecialties = useMemo(() => {
+    if (isYAxisNumeric) {
+      const specialties = Array.from(d3.rollup(data, (v) => d3.sum(v, (d) => Number(d[colY])), (d) => d.specialty))
+        .sort((a, b) => b[1] - a[1])
+        .slice(0, 5)
+        .map((d) => d[0]);
+      console.log('Y-axis (numeric specialties):', specialties);
+      return specialties;
+    } else {
+      const specialties = Array.from(d3.rollup(data, (v) => d3.sum(v, (d) => d.value), (d) => d.specialty))
+        .sort((a, b) => b[1] - a[1])
+        .slice(0, 5)
+        .map((d) => d[0]);
+      console.log('Y-axis (non-numeric specialties):', specialties);
+      return specialties;
+    }
+  }, [data, colY, isYAxisNumeric]);
+
+
+  
+  
+
+  const topSpecialtiesAndValues: Record<string, { specialties: string[], values: string[] }> = {};
+  sortedStates.forEach((state) => {
+    const stateData = data.filter(d => d.state === state);
+    const specialties = Array.from(d3.rollup(stateData, (v) => d3.sum(v, (d) => d.value), (d) => d.specialty))
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 5)
+      .map((d) => d[0]);
+
+    topSpecialtiesAndValues[state] = { specialties, values: [] }; // We can ignore values here as they are not used
+  });
+
+  // Y-axis Data: flattenedSpecialtyData (specialty)
+  const flattenedSpecialtyData: DataPointWithIndex[] = [];
+  Object.entries(topSpecialtiesAndValues).forEach(([state, { specialties }]) => {
+    specialties.forEach((specialty, index) => {
+      if (sortedSpecialties.includes(specialty)) {
+        const value1 = data
+          .filter(d => d.state === state && d.specialty === specialty)
+          .map(d => d.value1)
+          .flat(); // Flatten array of arrays
+        const uniqueValueCount = new Set(value1).size; // Count unique values
+        flattenedSpecialtyData.push({ state, specialty, value: 0, value1, index });
+      }
+    });
+  });
+
+  const topSpecialties = useMemo(() => {
+    return sortedSpecialties.slice(0, 5);
+  }, [sortedSpecialties]);
+  
+  const filteredFlattenedSpecialtyData = useMemo(() => {
+    return flattenedSpecialtyData.filter(d => topSpecialties.includes(d.specialty));
+  }, [flattenedSpecialtyData, topSpecialties]);
+
+  console.log('X-axis (states):', sortedStates);
+  console.log('Y-axis (specialties):', flattenedSpecialtyData.map(d => d.specialty));
+  console.log('Z-axis (unique value1 count):', flattenedSpecialtyData.map(d => new Set(d.value1).size));
+
+  const xScale = d3.scaleBand().domain(sortedStates).range([0, sortedStates.length * 2]);
+  const yScale = d3.scaleBand()
+  .domain(filteredFlattenedSpecialtyData.map((d) => d.specialty))
+  .range([0, filteredFlattenedSpecialtyData.length * 0.6]);
+
+  const zScale = d3.scaleLinear().domain([0, d3.max(flattenedSpecialtyData, (d) => new Set(d.value1).size) || 0]).range([0, 10]);
+
+  const baseColors = d3.schemeCategory10;
+  const lightColors = baseColors.map((color) => d3.interpolateRgb(color, '#ffffff')(0.6));
+  const colorScale = d3.scaleOrdinal(lightColors);
+  colorScale.domain(flattenedSpecialtyData.map(d => `${d.state}-${d.specialty}`));
+
+  const Axis: React.FC = () => {
+    const createLine = (start: [number, number, number], end: [number, number, number]) => {
+      const points = [new Vector3(...start), new Vector3(...end)];
+      const geometry = new BufferGeometry().setFromPoints(points);
+      const material = new LineBasicMaterial({ color: 'black' });
+      return (
+        <line>
+          <primitive object={geometry} />
+          <primitive object={material} />
+        </line>
+      );
+    };
+  
+    const yAxisLength = isYAxisNumeric
+    ? (flattenedSpecialtyData.length + 1) * 0.7 // Adjust multiplier based on spacing
+    : flattenedSpecialtyData.length * 0.8;
+  
+    return (
+      <>
+        {createLine([0, 0, 0], [sortedStates.length * 2, 0, 0])} {/* X axis */}
+        {isYAxisNumeric
+        ? createLine([0, 0, 0], [0, yAxisLength, 0]) 
+        : createLine([0, 0, 0], [0, yAxisLength, 0])} {/* Y axis */}
+        {createLine([0, 0, 0], [0, 0, 10])} {/* Z axis */}
+      </>
+    );
+  };
+  
+
+  const AxisLabels: React.FC = () => {
+    const yAxisLength = flattenedSpecialtyData.length * 0.6;
+    const zAxisMaxValue = d3.max(flattenedSpecialtyData, (d) => new Set(d.value1).size) || 0;
+    const zAxisTicks = d3.scaleLinear().domain([0, zAxisMaxValue]).ticks(5);
+    const displayedSpecialties = new Set<string>(); // To track displayed specialties
+  
+    // Determine which states have corresponding bars
+    const statesWithBars = new Set(flattenedSpecialtyData.map(d => d.state));
+  
+    return (
+      <>
+        <Text position={[sortedStates.length, -2.5, 0]} fontSize={0.50} color="black">
+          {colX}
+        </Text>
+        <Text
+          position={[-3.5, yAxisLength / 2, 0]}
+          fontSize={0.50}
+          color="black"
+          rotation={[0, 0, Math.PI / 2]}
+          anchorX="center"
+          anchorY="middle"
+        >
+          {colY}
+        </Text>
+        <Text position={[-2, -1.5, 5]} rotation={[Math.PI / 2, 0, Math.PI / 2]} fontSize={0.50} color="black">
+          {colZ}
+        </Text>
+        {sortedStates.filter(state => statesWithBars.has(state)).map((state, i) => (
+          <Text key={i} position={[xScale(state) || 0 + 0.5, -1.5, 0]} fontSize={0.3} color="black" rotation={[0, 0, Math.PI / 3]}>
+            {state === '' ? 'N/A' : state}
+          </Text>
+        ))}
+        {flattenedSpecialtyData.map((d, i) => {
+  if (displayedSpecialties.has(d.specialty)) {
+    return null; // Skip if already displayed
+  }
+  displayedSpecialties.add(d.specialty);
+
+  const yOffset = isNumeric(d.specialty) ? i * 0.5 : 0; // Apply offset only for numeric labels
+  const firstLabelYOffset = i === 0 ? 0.5 : 0;
+  const secondLabelYOffset = i === 1 ? 1 : 0; // Assuming 1 unit distance between first and second label
+  const thirdLabelYOffset = i === 2 ? 1.5 : 0; // Assuming 1 unit distance between second and third label
+  const fourthLabelYOffset = i === 3 ? 2 : 0; // Assuming 1 unit distance between third and fourth label
+  const fifthLabelYOffset = i === 4 ? 2.5 : 0; // Assuming 1 unit distance between fourth and fifth label
+  const subsequentLabelYOffset = i > 4 ? (i - 4) * 1 : 0; // Maintaining the same distance for subsequent labels
+
+  return (
+    <Text
+      key={i}
+      position={[-1, (yScale(d.specialty) || 0) + yOffset + firstLabelYOffset + secondLabelYOffset + thirdLabelYOffset + fourthLabelYOffset + fifthLabelYOffset + subsequentLabelYOffset, 0]}
+      fontSize={0.3}
+      color="black"
+      anchorX="right"
+    >
+      {d.specialty === '' ? 'N/A' : d.specialty}
+    </Text>
+  );
+})}
+
+
+        {zAxisTicks.map((tick, i) => (
+          <Text key={i} position={[-1, -1, zScale(tick) || 0]} fontSize={0.3} rotation={[Math.PI / 2, 0, 0]} color="black">
+            {tick}
+          </Text>
+        ))}
+      </>
+    );
+  };
+  
+  
+
+  // Handle click on bar to show/hide popup
+  const handleClick = (data: DataPointWithIndex) => {
+    console.log('Value1:', getPopupValue1(data.value1)); // Log value1 to the console
+    setHoveredBar((prev) => (prev && prev.index === data.index ? null : data));
+    const rowData = data.find((d: DataPoint) => d.state === data.state && d.specialty === data.specialty);
+    setSelectedRow(rowData || null);
+  };
+
+  // Function to get unique values for popup
+  const getUniqueValues = (arr: string[]): string[] => {
+    return Array.from(new Set(arr));
+  };
+
+  // Function to get the value1 for popup
+  const getPopupValue1 = (value1: string[]): string => {
+    // Filter out empty strings and replace them with 'N/A'
+    const valuesWithNAs = value1.map(v => v === '' ? 'N/A' : v);
+    const uniqueValues = Array.from(new Set(valuesWithNAs));
+    return uniqueValues.length === 0 ? 'N/A' : uniqueValues.join(', ');
+  };
+
+  return (
+    <div style={{ height: 600, position: 'relative' }}>
+      <Canvas camera={{ position: [0, 0, 20], up: [0, 0, 1] }}>
+        <ambientLight intensity={0.5} />
+        <pointLight position={[10, 10, 10]} />
+        <OrbitControls />
+
+        <Axis />
+        <AxisLabels />
+
+        {filteredFlattenedSpecialtyData.map((d, i) => {
+  const yOffset = isNumeric(d.specialty) ? i * 0.5 : 0; // Apply offset only for numeric labels
+  const firstBarYOffset = i === 0 ? 0.5 : 0;
+  const secondBarYOffset = i === 1 ? 1 : 0; // Assuming 1 unit distance between first and second bar
+  const thirdBarYOffset = i === 2 ? 1.5 : 0; // Assuming 1 unit distance between second and third bar
+  const fourthBarYOffset = i === 3 ? 2 : 0; // Assuming 1 unit distance between third and fourth bar
+  const fifthBarYOffset = i === 4 ? 2.5 : 0; // Assuming 1 unit distance between fourth and fifth bar
+  const subsequentBarYOffset = i > 4 ? (i - 4) * 1 : 0; // Maintaining the same distance for subsequent bars
+
+  return (
+    <mesh
+      key={i}
+      position={[
+        (xScale(d.state) || 0) + 0.5, // Position along X axis
+        (yScale(d.specialty) || 0) + yOffset + firstBarYOffset + secondBarYOffset + thirdBarYOffset + fourthBarYOffset + fifthBarYOffset + subsequentBarYOffset, // Position along Y axis with offsets
+        zScale(new Set(d.value1).size) / 2 // Position along Z axis
+      ]}
+      onClick={() => handleClick(d)}
+    >
+      <boxGeometry args={[1, 1, zScale(new Set(d.value1).size)]} />
+      <meshStandardMaterial color={colorScale(`${d.state}-${d.specialty}`)} />
+      <Text
+        position={[0, 0, zScale(new Set(d.value1).size) / 2 + 0.5]}
+        fontSize={0.3}
+        color="white"
+      >
+        {new Set(d.value1).size}
+      </Text>
+    </mesh>
+  );
+})}
+
+
+
+      </Canvas>
+      {hoveredBar && (
+        <div className="popup">
+          <div className="popup-content">
+            <h3>Data</h3>
+            <p><strong>{colX}</strong> : {hoveredBar.state === '' ? 'N/A' : hoveredBar.state}</p>
+            <p><strong>{colY}</strong> : {hoveredBar.specialty === '' ? 'N/A' : hoveredBar.specialty}</p>
+            <p><strong>{colZ}</strong> : {new Set(hoveredBar.value1).size}</p>
+            {/* (${getPopupValue1(hoveredBar.value1)}) */}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
+
+export default ThreeDBarChart;
+
+
+
+====================================================
+
+import React, { useMemo, useState } from 'react';
+import { Canvas } from '@react-three/fiber';
+import { OrbitControls, Text } from '@react-three/drei';
+import * as d3 from 'd3';
+import { BufferGeometry, LineBasicMaterial, Vector3 } from 'three';
+import './ThreeDBarChart.css'; // Import the CSS file for positioning the popup
+
+interface DataPoint {
+  state: string;
+  specialty: string;
+  value: number;
+  value1: string[]; // Array of strings to store multiple values
+  // Add other fields here if necessary
+  [key: string]: any; // For any additional dynamic fields
+}
+
+interface DataPointWithIndex extends DataPoint {
+  index: number;
+}
+
+interface ThreeDBarChartProps {
+  data: DataPoint[];
+  colX: string;
+  colY: string;
+  colZ: string;
+}
+
+const ThreeDBarChart: React.FC<ThreeDBarChartProps> = ({ data, colX, colY, colZ }) => {
+  const [hoveredBar, setHoveredBar] = useState<DataPointWithIndex | null>(null);
+  const [selectedRow, setSelectedRow] = useState<DataPoint | null>(null);
+
+  const isNumeric = (label: string): boolean => !isNaN(Number(label)) && !isNaN(parseFloat(label));
+
+
+  // Check if Y-axis data is numeric
+  const isYAxisNumeric = useMemo(() => {
+    return data.every(d => !isNaN(Number(d[colY])));
+  }, [data, colY]);
+
+  // Compute bar data with Z-axis values based on count of unique values in value1
+  const barData = useMemo(() => {
+    const groupedData = d3.rollup(
+      data,
+      (v) => new Set(v.map((d) => d.value)).size,
+      (d) => d.state,
+      (d) => d.specialty
+    );
+
+    const flattenedData: DataPoint[] = [];
+    for (const [state, specialties] of groupedData) {
+      for (const [specialty, _] of specialties) {
+        const value1 = data
+          .filter(d => d.state === state && d.specialty === specialty)
+          .map(d => d.value1)
+          .flat(); // Flatten array of arrays
+        flattenedData.push({ state, specialty, value: 0, value1 }); // Default value for value is 0
+      }
+    }
+    return flattenedData;
+  }, [data]);
+
+  // X-axis Data: sortedStates
+  const sortedStates = useMemo(() => {
+    const states = Array.from(d3.rollup(data, (v) => d3.sum(v, (d) => d.value), (d) => d.state))
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 5)
+      .map((d) => d[0]);
+    console.log('X-axis (states):', states);
+    return states;
+  }, [data]);
+
+  const topStateData = barData.filter((d) => sortedStates.includes(d.state));
+
+  // Y-axis Data: sortedSpecialties
+  const sortedSpecialties = useMemo(() => {
+    if (colY === 'ID') {
+      // Numeric sorting logic
+      const specialties = Array.from(d3.rollup(data, (v) => d3.sum(v, (d) => Number(d[colY])), (d) => d.specialty))
+        .sort((a, b) => b[1] - a[1])
+        .slice(0, 5)
+        .map((d) => d[0]);
+      console.log('Y-axis (numeric specialties):', specialties);
+      return specialties;
+    } else {
+      // Non-numeric sorting logic
+      const specialties = Array.from(d3.rollup(data, (v) => d3.sum(v, (d) => d.value), (d) => d.specialty))
+        .sort((a, b) => b[1] - a[1])
+        .slice(0, 5)
+        .map((d) => d[0]);
+      console.log('Y-axis (non-numeric specialties):', specialties);
+      return specialties;
+    }
+  }, [data, colY]);
+  
+
+  const topSpecialtiesAndValues: Record<string, { specialties: string[], values: string[] }> = {};
+  sortedStates.forEach((state) => {
+    const stateData = data.filter(d => d.state === state);
+    const specialties = Array.from(d3.rollup(stateData, (v) => d3.sum(v, (d) => d.value), (d) => d.specialty))
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 5)
+      .map((d) => d[0]);
+
+    topSpecialtiesAndValues[state] = { specialties, values: [] }; // We can ignore values here as they are not used
+  });
+
+  // Y-axis Data: flattenedSpecialtyData (specialty)
+  const flattenedSpecialtyData: DataPointWithIndex[] = [];
+  Object.entries(topSpecialtiesAndValues).forEach(([state, { specialties }]) => {
+    specialties.forEach((specialty, index) => {
+      if (sortedSpecialties.includes(specialty)) {
+        const value1 = data
+          .filter(d => d.state === state && d.specialty === specialty)
+          .map(d => d.value1)
+          .flat(); // Flatten array of arrays
+        const uniqueValueCount = new Set(value1).size; // Count unique values
+        flattenedSpecialtyData.push({ state, specialty, value: 0, value1, index });
+      }
+    });
+  });
+
+  console.log('X-axis (states):', sortedStates);
+  console.log('Y-axis (specialties):', flattenedSpecialtyData.map(d => d.specialty));
+  console.log('Z-axis (unique value1 count):', flattenedSpecialtyData.map(d => new Set(d.value1).size));
+
+  const xScale = d3.scaleBand().domain(sortedStates).range([0, sortedStates.length * 2]);
+  const yScale = d3.scaleBand().domain(flattenedSpecialtyData.map((d) => d.specialty)).range([0, flattenedSpecialtyData.length * 0.6]);
+  const zScale = d3.scaleLinear().domain([0, d3.max(flattenedSpecialtyData, (d) => new Set(d.value1).size) || 0]).range([0, 10]);
+
+  const baseColors = d3.schemeCategory10;
+  const lightColors = baseColors.map((color) => d3.interpolateRgb(color, '#ffffff')(0.6));
+  const colorScale = d3.scaleOrdinal(lightColors);
+  colorScale.domain(flattenedSpecialtyData.map(d => `${d.state}-${d.specialty}`));
+
+  const Axis: React.FC = () => {
+    const createLine = (start: [number, number, number], end: [number, number, number]) => {
+      const points = [new Vector3(...start), new Vector3(...end)];
+      const geometry = new BufferGeometry().setFromPoints(points);
+      const material = new LineBasicMaterial({ color: 'black' });
+      return (
+        <line>
+          <primitive object={geometry} />
+          <primitive object={material} />
+        </line>
+      );
+    };
+
+    return (
+      <>
+        {createLine([0, 0, 0], [sortedStates.length * 2, 0, 0])} {/* X axis */}
+        {createLine([0, 0, 0], [0, flattenedSpecialtyData.length * 0.6, 0])} {/* Y axis */}
+        {createLine([0, 0, 0], [0, 0, 10])} {/* Z axis */}
+      </>
+    );
+  };
+
+  const AxisLabels: React.FC = () => {
+    const yAxisLength = flattenedSpecialtyData.length * 0.6;
+    const zAxisMaxValue = d3.max(flattenedSpecialtyData, (d) => new Set(d.value1).size) || 0;
+    const zAxisTicks = d3.scaleLinear().domain([0, zAxisMaxValue]).ticks(5);
+    const displayedSpecialties = new Set<string>(); // To track displayed specialties
+    
+    // Determine which states have corresponding bars
+    const statesWithBars = new Set(flattenedSpecialtyData.map(d => d.state));
+    
+    return (
+      <>
+        <Text position={[sortedStates.length, -2.5, 0]} fontSize={0.50} color="black">
+          {colX}
+        </Text>
+        <Text
+          position={[-3.5, yAxisLength / 2, 0]}
+          fontSize={0.50}
+          color="black"
+          rotation={[0, 0, Math.PI / 2]}
+          anchorX="center"
+          anchorY="middle"
+        >
+          {colY}
+        </Text>
+        <Text position={[-2, -1.5, 5]} rotation={[Math.PI / 2, 0, Math.PI / 2]} fontSize={0.50} color="black">
+          {colZ}
+        </Text>
+        {sortedStates.filter(state => statesWithBars.has(state)).map((state, i) => (
+          <Text key={i} position={[xScale(state) || 0 + 0.5, -1.5, 0]} fontSize={0.3} color="black" rotation={[0, 0, Math.PI / 3]}>
+            {state === '' ? 'N/A' : state}
+          </Text>
+        ))}
+        
+        {flattenedSpecialtyData.map((d, i) => {
+          if (displayedSpecialties.has(d.specialty)) {
+            return null; // Skip if already displayed
+          }
+          displayedSpecialties.add(d.specialty);
+  
+          const yPosition = yScale(d.specialty) || 0;
+          const yOffset = isNumeric(d.specialty) ? i * 1.2 : 0;
+          const bandwidthAdjustment = isNumeric(d.specialty) ? numericBandwidthAdjustment : nonNumericBandwidthAdjustment;
+          const firstLabelYOffset = i === 0 ? 0.5 : 0;
+  
+          return (
+            <Text
+              key={i}
+              position={[-1, yPosition + yOffset + firstLabelYOffset + bandwidthAdjustment, 0]}
+              fontSize={0.3}
+              color="black"
+              anchorX="right"
+            >
+              {d.specialty === '' ? 'N/A' : d.specialty}
+            </Text>
+          );
+        })}
+        
+        {zAxisTicks.map((tick, i) => (
+          <Text key={i} position={[-1, -1, zScale(tick) || 0]} fontSize={0.3} rotation={[Math.PI / 2, 0, 0]} color="black">
+            {tick}
+          </Text>
+        ))}
+      </>
+    );
+  };
+  
+  
+
+  // Handle click on bar to show/hide popup
+  const handleClick = (data: DataPointWithIndex) => {
+    console.log('Value1:', getPopupValue1(data.value1)); // Log value1 to the console
+    setHoveredBar((prev) => (prev && prev.index === data.index ? null : data));
+    const rowData = data.find((d: DataPoint) => d.state === data.state && d.specialty === data.specialty);
+    setSelectedRow(rowData || null);
+  };
+
+  // Function to get unique values for popup
+  const getUniqueValues = (arr: string[]): string[] => {
+    return Array.from(new Set(arr));
+  };
+
+  // Function to get the value1 for popup
+  const getPopupValue1 = (value1: string[]): string => {
+    // Filter out empty strings and replace them with 'N/A'
+    const valuesWithNAs = value1.map(v => v === '' ? 'N/A' : v);
+    const uniqueValues = Array.from(new Set(valuesWithNAs));
+    return uniqueValues.length === 0 ? 'N/A' : uniqueValues.join(', ');
+  };
+
+  // Define different bandwidth adjustments
+  const numericBandwidthAdjustment = yScale.bandwidth ? yScale.bandwidth() / 1.2 : 0;
+  const nonNumericBandwidthAdjustment = yScale.bandwidth ? yScale.bandwidth() / 3.4 : 0;
+
+
+  return (
+    <div style={{ height: 600, position: 'relative' }}>
+      <Canvas camera={{ position: [0, 0, 20], up: [0, 0, 1] }}>
+        <ambientLight intensity={0.5} />
+        <pointLight position={[10, 10, 10]} />
+        <OrbitControls />
+  
+        <Axis />
+        <AxisLabels />
+  
+        {flattenedSpecialtyData.map((d, i) => {
+           const yPosition = yScale(d.specialty) || 0;
+           const yOffset = isNumeric(d.specialty) ? i * 1 : 0;
+           const bandwidthAdjustment = isNumeric(d.specialty) ? numericBandwidthAdjustment : nonNumericBandwidthAdjustment;
+           const adjustedYPosition = yPosition + yOffset + bandwidthAdjustment;
+  
+          return (
+            <mesh
+              key={i}
+              position={[
+                xScale(d.state) || 0 + 0.5,
+                adjustedYPosition,
+                zScale(new Set(d.value1).size) / 2
+              ]}
+              onClick={() => handleClick(d)}
+            >
+              <boxGeometry args={[1, 1, zScale(new Set(d.value1).size)]} />
+              <meshStandardMaterial color={colorScale(`${d.state}-${d.specialty}`)} />
+              <Text
+                position={[0, 0, zScale(new Set(d.value1).size) / 2 + 0.5]}
+                fontSize={0.3}
+                color="white"
+              >
+                {new Set(d.value1).size}
+              </Text>
+            </mesh>
+          );
+        })}
+  
+      </Canvas>
+      {hoveredBar && (
+        <div className="popup">
+          <div className="popup-content">
+            <h3>Data</h3>
+            <p><strong>{colX}</strong> : {hoveredBar.state === '' ? 'N/A' : hoveredBar.state}</p>
+            <p><strong>{colY}</strong> : {hoveredBar.specialty === '' ? 'N/A' : hoveredBar.specialty}</p>
+            <p><strong>{colZ}</strong> : {new Set(hoveredBar.value1).size}</p>
+            {/* (${getPopupValue1(hoveredBar.value1)}) */}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+  
+};
+
+export default ThreeDBarChart;
+
+======================================================================
+
+import React, { useState, useEffect, useMemo } from 'react';
+import { Canvas } from '@react-three/fiber';
+import { OrbitControls, Text } from '@react-three/drei';
+import * as d3 from 'd3';
+import { BufferGeometry, LineBasicMaterial, Float32BufferAttribute, Color, Vector3, Line, MeshStandardMaterial } from 'three';
+ 
+// Define types for the data and props
+interface DataPoint {
+  x: string | number;
+  y: string;
+  z: string;
+  value: number;
+}
+ 
+interface AxisLabelsProps {
+  cols: {
+    X: string;
+    Y: string;
+    Z: string;
+   
+  };
+  xLabels: string[];
+  yLabels: string[];
+  zLabels: string[];
+  xScale: d3.ScaleBand<string>;
+  yScale: d3.ScaleBand<string>;
+  zScale: d3.ScaleBand<string>;
+}
+ 
+interface ThreeDScatterPlotProps {
+  cols: {
+    X: string;
+    Y: string;
+    Z: string;
+  };
+}
+ 
+// Helper function to check if a string is numeric
+const isNumeric = (value: string) => !isNaN(Number(value));
+ 
+// Sort function to handle both numeric and non-numeric labels
+const sortLabels = (a: string, b: string): number => {
+  if (isNumeric(a) && isNumeric(b)) {
+    return parseFloat(a) - parseFloat(b);
+  } else {
+    return a.localeCompare(b);
+  }
+};
+ 
+// Random color generator
+const getRandomColor = (colorScale: d3.ScaleSequential<string>) => {
+  const randomValue = Math.random();
+  return colorScale(randomValue);
+};
+ 
+ 
+ 
+// Fetch and process data
+const fetchData = async (
+  maxCount: number,
+  setMaxCount: React.Dispatch<React.SetStateAction<number>>,
+  setData: React.Dispatch<React.SetStateAction<DataPoint[]>>,
+  cols: ThreeDScatterPlotProps['cols']
+) => {
+  const data = await d3.csv('/Segmentation-Dummy-Bkp.csv');
+ 
+  const groupedByX = d3.rollup(
+    data,
+    v => v.length,
+    d => d[cols.X] as string
+  );
+  const topX = Array.from(groupedByX)
+  .sort((a, b) => sortLabels(a[0], b[0])) // Extract keys and sort
+  .slice(0, 10);
+ 
+  const groupedByY = d3.rollup(
+    data,
+    v => v.length,
+    d => d[cols.Y] as string
+  );
+  const topY = Array.from(groupedByY).sort((a, b) => sortLabels(a[0], b[0])) // Extract keys and sort
+  .slice(0, 10);
+ 
+  const groupedByZ = d3.rollup(
+    data,
+    v => v.length,
+    d => d[cols.Z] as string
+  );
+  const topZ = Array.from(groupedByZ).sort((a, b) => sortLabels(a[0], b[0])) // Extract keys and sort
+  .slice(0, 10);
+ 
+  const topXKeys = new Set(topX.map(d => d[0]));
+  const topYKeys = new Set(topY.map(d => d[0]));
+  const topZKeys = new Set(topZ.map(d => d[0]));
+ 
+  const filteredData = data.filter(
+    d =>
+      topXKeys.has(d[cols.X] as string) &&
+      topYKeys.has(d[cols.Y] as string) &&
+      topZKeys.has(d[cols.Z] as string)
+  );
+ 
+  const finalGroupedData = d3.rollup(
+    filteredData,
+    v => {
+      let h = v.length// Use Z axis data here
+      if (h > maxCount) setMaxCount(h);
+      return h;
+    },
+    d => d[cols.X] as string,
+    d => d[cols.Y] as string,
+    d => d[cols.Z] as string
+  );
+ 
+  const processedData: DataPoint[] = [];
+  for (const [x, yGroups] of finalGroupedData) {
+    for (const [y, zGroups] of yGroups) {
+      for (const [z, value] of zGroups) {
+        processedData.push({
+          x,
+          y,
+          z,
+          value
+        });
+      }
+    }
+  }
+ 
+  setData(processedData);
+};
+ 
+// Grid component
+const Grid: React.FC = () => {
+  const gridSize = 10;
+  const divisions = 10;
+  const gridLines: number[][] = [];
+ 
+  for (let i = 0; i <= divisions; i++) {
+    const offset = (i / divisions) * gridSize;
+    gridLines.push([offset, 0, 0, offset, gridSize, 0]); // Lines parallel to Y axis
+    gridLines.push([0, offset, 0, gridSize, offset, 0]); // Lines parallel to X axis
+    gridLines.push([0, 0, offset, gridSize, 0, offset]); // Lines parallel to Z axis
+  }
+ 
+  return (
+    <>
+      {gridLines.map((line, i) => {
+        const points = new Float32BufferAttribute(line, 3);
+        const geometry = new BufferGeometry();
+        geometry.setAttribute('position', points);
+ 
+        return (
+          <line key={i}>
+            <primitive object={geometry} />
+            <lineBasicMaterial color="lightgray" />
+          </line>
+        );
+      })}
+    </>
+  );
+};
+ 
+// Axis labels component
+const AxisLabels: React.FC<AxisLabelsProps> = ({ xLabels, yLabels, zLabels, xScale, yScale, zScale, cols }) => {
+  return (
+    <>
+      <Text position={[3.5, -4.5, -1]} fontSize={0.5} anchorX="center" anchorY="middle" color="black">
+        {cols.X}
+      </Text>
+      <Text
+        position={[-5.5, 4.0, -1]}
+        fontSize={0.5}
+        color="black"
+        rotation={[0, 0, Math.PI / 2]}
+        anchorX="center"
+        anchorY="middle"
+      >
+        {cols.Y}
+      </Text>
+      <Text position={[-4, -1.5, 5]} rotation={[Math.PI / 2, 0, Math.PI / 2]} fontSize={0.5} color="black" >
+        {cols.Z}
+      </Text>
+      {xLabels &&
+        xLabels.map((label, i) => (
+          <Text key={i} position={[xScale(label) as number, -1, -1]} rotation={[0, 0, Math.PI / 3]} fontSize={0.3} color="black" anchorX="right"
+          anchorY="middle">
+            {label === '' ? 'N/A' : label}
+          </Text>
+        ))}
+      {yLabels &&
+        yLabels.map((label, i) => (
+          <Text key={i} position={[-1, yScale(label) as number, -1]} fontSize={0.3} color="black" anchorX="right">
+           {label === '' ? 'N/A' : label}
+          </Text>
+        ))}
+      {zLabels &&
+        zLabels.map((label, i) => (
+          <Text key={i} position={[-1, -1, zScale(label) as number]} fontSize={0.3} rotation={[Math.PI / 2, 0, 0]} color="black" anchorX="right"
+          anchorY="middle">
+            {label === '' ? 'N/A' : label}
+          </Text>
+        ))}
+    </>
+  );
+};
+ 
+ 
+ 
+/// Color legend component
+const ColorLegend: React.FC<{ zLabels: string[], colorMap: Map<string, string> }> = ({ zLabels, colorMap }) => {
+  const sortedZLabels = [...zLabels].sort(sortLabels);
+ 
+  return (
+    <group position={[12, 2, 5]}>
+      {sortedZLabels.map((label, i) => (
+        <group key={i} position={[0, i * 0.6, 0]}>
+          <mesh>
+            <boxGeometry args={[0.5, 0.5, 0.5]} />
+            <meshStandardMaterial color={new Color(colorMap.get(label) || 'gray')} />
+          </mesh>
+          <Text fontSize={0.3} color="black" position={[1.3, 0, 0]} anchorX="left" anchorY="middle">
+            {label === '' ? 'N/A' : label}
+          </Text>
+        </group>
+      ))}
+    </group>
+  );
+};
+ 
+// Main 3D scatter plot component
+const ThreeDScatterPlot: React.FC<ThreeDScatterPlotProps> = ({ cols }) => {
+  const [data, setData] = useState<DataPoint[]>([]);
+  const [maxCount, setMaxCount] = useState(0);
+  const [selectedPoint, setSelectedPoint] = useState<DataPoint | null>(null);
+ 
+  useEffect(() => {
+    fetchData(maxCount, setMaxCount, setData, cols);
+    setSelectedPoint(null); // Reset selected point when data changes
+  }, [cols.X, cols.Y, cols.Z]);
+ 
+  const xLabels: string[] = useMemo(() => {
+    const labels = Array.from(new Set(data.map(d => String(d.x))));
+    return labels.sort(sortLabels);
+  }, [data]);
+ 
+  const yLabels: string[] = useMemo(() => {
+    const labels = Array.from(new Set(data.map(d => String(d.y))));
+    return labels.sort(sortLabels);
+  }, [data]);
+ 
+  const zLabels: string[] = useMemo(() => {
+    const labels = Array.from(new Set(data.map(d => String(d.z))));
+    return labels.sort(sortLabels);
+  }, [data]);
+ 
+  const xScale = useMemo(() => (data.length > 0 ? d3.scaleBand().domain(xLabels).range([0, 10]) : null), [data, xLabels]);
+  const yScale = useMemo(() => (data.length > 0 ? d3.scaleBand().domain(yLabels).range([0, 10]) : null), [data, yLabels]);
+  const zScale = useMemo(() => (data.length > 0 ? d3.scaleBand().domain(zLabels).range([0, 10]) : null), [data, zLabels]);
+ 
+ 
+  const colorMap = useMemo(() => {
+    const uniqueZLabels = Array.from(new Set(data.map(d => d.z)));
+    const colorScale = d3.scaleOrdinal(d3.schemeSet2).domain(uniqueZLabels);
+    const map = new Map(uniqueZLabels.map(label => [label, colorScale(label) as string]));
+    return map;
+  }, [data]);
+ 
+  if (!xScale || !yScale || !zScale || !colorMap) return null;
+ 
+  return (
+    <div style={{ height: 600 }}>
+      <center>
+        <h1>3D Color Scatter Chart</h1>
+      </center>
+      <Canvas camera={{ position: [0, 0, 20], up: [0, 0, 1] }}>
+        <ambientLight intensity={0.5} />
+        <pointLight position={[20, 20, 20]} />
+        <OrbitControls />
+ 
+        <Grid />
+        <AxisLabels xLabels={xScale.domain()} yLabels={yScale.domain()} zLabels={zScale.domain()} xScale={xScale} yScale={yScale} zScale={zScale} cols={cols} />
+        <ColorLegend zLabels={Array.from(new Set(data.map(d => d.z)))} colorMap={colorMap} />
+ 
+        {data.map((d, i) => (
+          <React.Fragment key={i}>
+            <mesh
+  position={[
+    xScale(String(d.x)) as number,
+    yScale(String(d.y)) as number,
+    zScale(String(d.z)) as number,
+  ]}
+  onClick={() => setSelectedPoint(d)}
+>
+ 
+              <sphereGeometry args={[0.2, 32, 32]} />
+              <meshStandardMaterial color={colorMap.get(d.z)} />
+            </mesh>
+          </React.Fragment>
+        ))}
+      </Canvas>
+      // colored scatter
+      {selectedPoint && (
+        <div style={{ position: 'absolute', top: 450, right: 50, padding: 10, background: 'white', border: '1px solid black' }}>
+          <h3>Data Point Details</h3>
+          <p><strong>{cols.X}:</strong> {selectedPoint.x === '' ? 'N/A' : selectedPoint.x}</p>
+          <p><strong>{cols.Y}:</strong> {selectedPoint.y === '' ? 'N/A' : selectedPoint.y}</p>
+          <p><strong>{cols.Z}:</strong> {selectedPoint.z === '' ? 'N/A' : selectedPoint.z}</p>
+          <p><strong>Value:</strong> {selectedPoint.value}</p>
+          <button onClick={() => setSelectedPoint(null)}>Close</button>
+        </div>
+      )}
+    </div>
+  );
+};
+ 
+// Plain scatter plot component
+const PlainThreeDScatterPlot: React.FC<ThreeDScatterPlotProps> = ({ cols }) => {
+  const [data, setData] = useState<DataPoint[]>([]);
+  const [maxCount, setMaxCount] = useState(0);
+  const [selectedPoint, setSelectedPoint] = useState<DataPoint | null>(null);
+ 
+  useEffect(() => {
+    fetchData(maxCount, setMaxCount, setData, cols);
+  }, [cols.X, cols.Y, cols.Z]);
+ 
+  const xLabels: string[] = useMemo(() => {
+    const labels = Array.from(new Set(data.map(d => String(d.x))));
+    return labels.sort(sortLabels);
+  }, [data]);
+ 
+  const yLabels: string[] = useMemo(() => {
+    const labels = Array.from(new Set(data.map(d => String(d.y))));
+    return labels.sort(sortLabels);
+  }, [data]);
+ 
+  const zLabels: string[] = useMemo(() => {
+    const labels = Array.from(new Set(data.map(d => String(d.z))));
+    return labels.sort(sortLabels);
+  }, [data]);
+ 
+  const xScale = useMemo(() => (data.length > 0 ? d3.scaleBand().domain(xLabels).range([0, 10]) : null), [data, xLabels]);
+  const yScale = useMemo(() => (data.length > 0 ? d3.scaleBand().domain(yLabels).range([0, 10]) : null), [data, yLabels]);
+  const zScale = useMemo(() => (data.length > 0 ? d3.scaleBand().domain(zLabels).range([0, 10]) : null), [data, zLabels]);
+ 
+  if (!xScale || !yScale || !zScale) return null;
+ 
+  return (
+    <div style={{ height: 600 }}>
+      <center>
+        <h1>3D Scatter Chart</h1>
+      </center>
+      <Canvas camera={{ position: [0, 0, 20], up: [0, 0, 1] }}>
+        <ambientLight intensity={0.5} />
+        <pointLight position={[20, 20, 20]} />
+        <OrbitControls />
+ 
+        <Grid />
+        <AxisLabels xLabels={xScale.domain()} yLabels={yScale.domain()} zLabels={zScale.domain()} xScale={xScale} yScale={yScale} zScale={zScale} cols={cols} />
+ 
+        {data.map((d, i) => (
+          <React.Fragment key={i}>
+            <mesh
+  position={[
+    xScale(String(d.x)) as number,
+    yScale(String(d.y)) as number,
+    zScale(String(d.z)) as number,
+  ]}
+  onClick={() => setSelectedPoint(d)}
+>
+ 
+              <sphereGeometry args={[0.2, 32, 32]} />
+              <meshStandardMaterial color="red" />
+            </mesh>
+            <primitive
+  object={
+    new Line(
+      new BufferGeometry().setFromPoints([
+        new Vector3(
+          xScale(String(d.x)) as number,
+          yScale(String(d.y)) as number,
+          0
+        ),
+        new Vector3(
+          xScale(String(d.x)) as number,
+          yScale(String(d.y)) as number,
+          zScale(String(d.z)) as number
+        )
+      ]),
+      new LineBasicMaterial({ color: 'lightgray' })
+    )
+  }
+/>
+          </React.Fragment>
+        ))}
+      </Canvas>
+      {selectedPoint && (
+        <div style={{ position: 'absolute', top: 450, right: 50, padding: 10, background: 'white', border: '1px solid black' }}>
+          <h3>Data Point Details</h3>
+          <p><strong>{cols.X}:</strong> {selectedPoint.x === '' ? 'N/A' : selectedPoint.x}</p>
+          <p><strong>{cols.Y}:</strong> {selectedPoint.y === '' ? 'N/A' : selectedPoint.y}</p>
+          <p><strong>{cols.Z}:</strong> {selectedPoint.z === '' ? 'N/A' : selectedPoint.z}</p>
+          <p><strong>Value:</strong> {selectedPoint.value}</p>
+          <button onClick={() => setSelectedPoint(null)}>Close</button>
+        </div>
+      )}
+    </div>
+  );
+};
+ 
+export { ThreeDScatterPlot, PlainThreeDScatterPlot };
+
+===========================================================
+import React, { useState, useEffect, useMemo } from 'react';
+import { Canvas } from '@react-three/fiber';
+import { OrbitControls, Text } from '@react-three/drei';
+import * as d3 from 'd3';
+import { BufferGeometry, LineBasicMaterial, Float32BufferAttribute, Color, Vector3, Line, MeshStandardMaterial } from 'three';
+
+// Define types for the data and props
+interface DataPoint {
+  x: string | number;
+  y: string;
+  z: string;
+  value: number;
+}
+
+interface AxisLabelsProps {
+  cols: {
+    X: string;
+    Y: string;
+    Z: string;
+    
+  };
+  xLabels: string[];
+  yLabels: string[];
+  zLabels: string[];
+  xScale: d3.ScaleBand<string>;
+  yScale: d3.ScaleBand<string>;
+  zScale: d3.ScaleBand<string>;
+}
+
+interface ThreeDScatterPlotProps {
+  cols: {
+    X: string;
+    Y: string;
+    Z: string;
+  };
+}
+
+// Helper function to check if a string is numeric
+const isNumeric = (value: string) => !isNaN(Number(value));
+
+// Sort function to handle both numeric and non-numeric labels
+const sortLabels = (a: string, b: string): number => {
+  if (isNumeric(a) && isNumeric(b)) {
+    return parseFloat(a) - parseFloat(b);
+  } else {
+    return a.localeCompare(b);
+  }
+};
+
+
+// Random color generator
+const getRandomColor = (colorScale: d3.ScaleSequential<string>) => {
+  const randomValue = Math.random();
+  return colorScale(randomValue);
+};
+
+// Fetch and process data
+const fetchData = async (
+  maxCount: number,
+  setMaxCount: React.Dispatch<React.SetStateAction<number>>,
+  setData: React.Dispatch<React.SetStateAction<DataPoint[]>>,
+  cols: ThreeDScatterPlotProps['cols']
+) => {
+  const data = await d3.csv('/10000_HCP_Ven_CLL.csv');
+
+  const groupedByX = d3.rollup(
+    data,
+    v => v.length,
+    d => d[cols.X] as string
+  );
+  const topX = Array.from(groupedByX)
+  .sort((a, b) => sortLabels(a[0], b[0])) // Extract keys and sort
+  .slice(0, 10);
+
+  const groupedByY = d3.rollup(
+    data,
+    v => v.length,
+    d => d[cols.Y] as string
+  );
+  const topY = Array.from(groupedByY).sort((a, b) => sortLabels(a[0], b[0])) // Extract keys and sort
+  .slice(0, 10);
+
+  const groupedByZ = d3.rollup(
+    data,
+    v => v.length,
+    d => d[cols.Z] as string
+  );
+  const topZ = Array.from(groupedByZ).sort((a, b) => sortLabels(a[0], b[0])) // Extract keys and sort
+  .slice(0, 10);
+  const topXKeys = new Set(topX.map(d => d[0]));
+  const topYKeys = new Set(topY.map(d => d[0]));
+  const topZKeys = new Set(topZ.map(d => d[0]));
+
+  const filteredData = data.filter(
+    d =>
+      topXKeys.has(d[cols.X] as string) &&
+      topYKeys.has(d[cols.Y] as string) &&
+      topZKeys.has(d[cols.Z] as string)
+  );
+
+  const finalGroupedData = d3.rollup(
+    filteredData,
+    v => {
+      let h = new Set(v.map(d => d[cols.Z] as string)).size; // Use Z axis data here
+      if (h > maxCount) setMaxCount(h);
+      return h;
+    },
+    d => d[cols.X] as string,
+    d => d[cols.Y] as string,
+    d => d[cols.Z] as string
+  );
+
+  const processedData: DataPoint[] = [];
+  for (const [x, yGroups] of finalGroupedData) {
+    for (const [y, zGroups] of yGroups) {
+      for (const [z, value] of zGroups) {
+        processedData.push({
+          x,
+          y,
+          z,
+          value
+        });
+      }
+    }
+  }
+
+  setData(processedData);
+};
+
+// Grid component
+const Grid: React.FC = () => {
+  const gridSize = 10;
+  const divisions = 10;
+  const gridLines: number[][] = [];
+
+  for (let i = 0; i <= divisions; i++) {
+    const offset = (i / divisions) * gridSize;
+    gridLines.push([offset, 0, 0, offset, gridSize, 0]); // Lines parallel to Y axis
+    gridLines.push([0, offset, 0, gridSize, offset, 0]); // Lines parallel to X axis
+    gridLines.push([0, 0, offset, gridSize, 0, offset]); // Lines parallel to Z axis
+  }
+
+  return (
+    <>
+      {gridLines.map((line, i) => {
+        const points = new Float32BufferAttribute(line, 3);
+        const geometry = new BufferGeometry();
+        geometry.setAttribute('position', points);
+
+        return (
+          <line key={i}>
+            <primitive object={geometry} />
+            <lineBasicMaterial color="lightgray" />
+          </line>
+        );
+      })}
+    </>
+  );
+};
+
+// Axis labels component
+const AxisLabels: React.FC<AxisLabelsProps> = ({ xLabels, yLabels, zLabels, xScale, yScale, zScale, cols }) => {
+  return (
+    <>
+      <Text position={[3.5, -4.5, -1]} fontSize={0.5} anchorX="center" anchorY="middle" color="black">
+        {cols.X}
+      </Text>
+      <Text position={[-5.5, 4.0, -1]} fontSize={0.5} color="black" rotation={[0, 0, Math.PI / 2]} anchorX="center" anchorY="middle">
+        {cols.Y}
+      </Text>
+      <Text position={[-5.5, -1.5, 5]} rotation={[Math.PI / 2, 0, Math.PI / 2]} fontSize={0.5} color="black">
+        {cols.Z}
+      </Text>
+      {xLabels.map((label, i) => (
+        <Text key={i} position={[xScale(String(label)) as number, -1, -1]} rotation={[0, 0, Math.PI / 3]} fontSize={0.3} color="black" anchorX="right"
+        anchorY="middle">
+          {label === '' ? 'N/A' : label}
+        </Text>
+      ))}
+      {yLabels.map((label, i) => (
+        <Text key={i} position={[-1, yScale(String(label)) as number, -1]} fontSize={0.3} color="black" anchorX="right"
+        anchorY="middle">
+          {label === '' ? 'N/A' : label}
+        </Text>
+      ))}
+      {zLabels.map((label, i) => (
+        <Text key={i} position={[-1, -1, zScale(String(label)) as number]} fontSize={0.3} rotation={[Math.PI / 2, 0, 0]} color="black" anchorX="right"
+        anchorY="middle">
+          {label === '' ? 'N/A' : label}
+        </Text>
+      ))}
+    </>
+  );
+};
+
+
+/// Color legend component
+const ColorLegend: React.FC<{ zLabels: string[], colorMap: Map<string, string> }> = ({ zLabels, colorMap }) => {
+  const sortedZLabels = [...zLabels].sort(sortLabels);
+
+  return (
+    <group position={[12, 2, 5]}>
+      {sortedZLabels.map((label, i) => (
+        <group key={i} position={[0, i * 0.6, 0]}>
+          <mesh>
+            <boxGeometry args={[0.5, 0.5, 0.5]} />
+            <meshStandardMaterial color={new Color(colorMap.get(label) || 'gray')} />
+          </mesh>
+          <Text fontSize={0.3} color="black" position={[1.3, 0, 0]} anchorX="left" anchorY="middle">
+            {label === '' ? 'N/A' : label}
+          </Text>
+        </group>
+      ))}
+    </group>
+  );
+};
+
+
+
+
+
+// Main 3D scatter plot component
+const ThreeDScatterPlot: React.FC<ThreeDScatterPlotProps> = ({ cols }) => {
+  const [data, setData] = useState<DataPoint[]>([]);
+  const [maxCount, setMaxCount] = useState(0);
+  const [selectedPoint, setSelectedPoint] = useState<DataPoint | null>(null);
+
+  useEffect(() => {
+    fetchData(maxCount, setMaxCount, setData, cols);
+  }, [cols.X, cols.Y, cols.Z]);
+
+  const xLabels: string[] = useMemo(() => {
+    const labels = Array.from(new Set(data.map(d => String(d.x))));
+    return labels.sort(sortLabels);
+  }, [data]);
+  
+  const yLabels: string[] = useMemo(() => {
+    const labels = Array.from(new Set(data.map(d => String(d.y))));
+    return labels.sort(sortLabels);
+  }, [data]);
+  
+  const zLabels: string[] = useMemo(() => {
+    const labels = Array.from(new Set(data.map(d => String(d.z))));
+    return labels.sort(sortLabels);
+  }, [data]);
+  
+  
+  
+  const xScale = useMemo(() => (data.length > 0 ? d3.scaleBand().domain(xLabels).range([0, 10]) : null), [data, xLabels]);
+  const yScale = useMemo(() => (data.length > 0 ? d3.scaleBand().domain(yLabels).range([0, 10]) : null), [data, yLabels]);
+  const zScale = useMemo(() => (data.length > 0 ? d3.scaleBand().domain(zLabels).range([0, 10]) : null), [data, zLabels]);
+  
+
+  const colorMap = useMemo(() => {
+    const uniqueZLabels = Array.from(new Set(data.map(d => d.z)));
+    const colorScale = d3.scaleOrdinal(d3.schemeSet2).domain(uniqueZLabels);
+    const map = new Map(uniqueZLabels.map(label => [label, colorScale(label) as string]));
+    return map;
+  }, [data]);
+
+  if (!xScale || !yScale || !zScale || !colorMap) return null;
+
+  return (
+    <div style={{ height: 600 }}>
+      <center>
+        <h1>3-D Color Scatter Chart</h1>
+      </center>
+      <Canvas camera={{ position: [0, 0, 20], up: [0, 0, 1] }}>
+        <ambientLight intensity={0.5} />
+        <pointLight position={[20, 20, 20]} />
+        <OrbitControls />
+
+        <Grid />
+        <AxisLabels xLabels={xScale.domain()} yLabels={yScale.domain()} zLabels={zScale.domain()} xScale={xScale} yScale={yScale} zScale={zScale} cols={cols} />
+        <ColorLegend zLabels={Array.from(new Set(data.map(d => d.z)))} colorMap={colorMap} />
+
+        {data.map((d, i) => (
+          <React.Fragment key={i}>
+           <mesh
+  position={[
+    xScale(String(d.x)) as number,
+    yScale(String(d.y)) as number,
+    zScale(String(d.z)) as number,
+  ]}
+  onClick={() => setSelectedPoint(d)}
+>
+
+              <sphereGeometry args={[0.2, 32, 32]} />
+              <meshStandardMaterial color={colorMap.get(d.z)} />
+            </mesh>
+          </React.Fragment>
+        ))}
+      </Canvas>
+      // colored scatter
+      {selectedPoint && (
+        <div style={{ position: 'absolute', top: 450, right: 50, padding: 10, background: 'white', border: '1px solid black' }}>
+          <h3>Data Point Details</h3>
+          <p><strong>{cols.X}:</strong> {selectedPoint.x === '' ? 'N/A' : selectedPoint.x}</p>
+          <p><strong>{cols.Y}:</strong> {selectedPoint.y === '' ? 'N/A' : selectedPoint.y}</p>
+          <p><strong>{cols.Z}:</strong> {selectedPoint.z === '' ? 'N/A' : selectedPoint.z}</p>
+          {/* <p><strong>Value:</strong> {selectedPoint.value}</p> */}
+          <button onClick={() => setSelectedPoint(null)}>Close</button>
+        </div>
+      )}
+    </div>
+  );
+};
+
+// Plain scatter plot component
+const PlainThreeDScatterPlot: React.FC<ThreeDScatterPlotProps> = ({ cols }) => {
+  const [data, setData] = useState<DataPoint[]>([]);
+  const [maxCount, setMaxCount] = useState(0);
+  const [selectedPoint, setSelectedPoint] = useState<DataPoint | null>(null);
+
+  useEffect(() => {
+    fetchData(maxCount, setMaxCount, setData, cols);
+  }, [cols.X, cols.Y, cols.Z]);
+
+  const xLabels: string[] = useMemo(() => {
+    const labels = Array.from(new Set(data.map(d => String(d.x))));
+    return labels.sort(sortLabels);
+  }, [data]);
+  
+  const yLabels: string[] = useMemo(() => {
+    const labels = Array.from(new Set(data.map(d => String(d.y))));
+    return labels.sort(sortLabels);
+  }, [data]);
+  
+  const zLabels: string[] = useMemo(() => {
+    const labels = Array.from(new Set(data.map(d => String(d.z))));
+    return labels.sort(sortLabels);
+  }, [data]);
+
+  
+  
+  const xScale = useMemo(() => (data.length > 0 ? d3.scaleBand().domain(xLabels).range([0, 10]) : null), [data, xLabels]);
+  const yScale = useMemo(() => (data.length > 0 ? d3.scaleBand().domain(yLabels).range([0, 10]) : null), [data, yLabels]);
+  const zScale = useMemo(() => (data.length > 0 ? d3.scaleBand().domain(zLabels).range([0, 10]) : null), [data, zLabels]);
+
+  if (!xScale || !yScale || !zScale) return null;
+
+  return (
+    <div style={{ height: 600 }}>
+      <center>
+        <h1>Color Scatter Chart</h1>
+      </center>
+      <Canvas camera={{ position: [0, 0, 20], up: [0, 0, 1] }}>
+        <ambientLight intensity={0.5} />
+        <pointLight position={[20, 20, 20]} />
+        <OrbitControls />
+
+        <Grid />
+        <AxisLabels xLabels={xScale.domain()} yLabels={yScale.domain()} zLabels={zScale.domain()} xScale={xScale} yScale={yScale} zScale={zScale} cols={cols} />
+
+        {data.map((d, i) => (
+          <React.Fragment key={i}>
+            <mesh
+  position={[
+    xScale(String(d.x)) as number,
+    yScale(String(d.y)) as number,
+    zScale(String(d.z)) as number,
+  ]}
+  onClick={() => setSelectedPoint(d)}
+>
+
+              <sphereGeometry args={[0.2, 32, 32]} />
+              <meshStandardMaterial color="red" />
+            </mesh>
+            <primitive
+  object={
+    new Line(
+      new BufferGeometry().setFromPoints([
+        new Vector3(
+          xScale(String(d.x)) as number,
+          yScale(String(d.y)) as number,
+          0
+        ),
+        new Vector3(
+          xScale(String(d.x)) as number,
+          yScale(String(d.y)) as number,
+          zScale(String(d.z)) as number
+        )
+      ]),
+      new LineBasicMaterial({ color: 'lightgray' })
+    )
+  }
+/>
+
+          </React.Fragment> 
+        ))}
+      </Canvas>
+      {selectedPoint && (
+        <div style={{ position: 'absolute', top: 450, right: 50, padding: 10, background: 'white', border: '1px solid black' }}>
+          <h3>Data Point Details</h3>
+          <p><strong>{cols.X}:</strong> {selectedPoint.x === '' ? 'N/A' : selectedPoint.x}</p>
+          <p><strong>{cols.Y}:</strong> {selectedPoint.y === '' ? 'N/A' : selectedPoint.y}</p>
+          <p><strong>{cols.Z}:</strong> {selectedPoint.z === '' ? 'N/A' : selectedPoint.z}</p>
+          {/* <p><strong>Value:</strong> {selectedPoint.value}</p> */}
+          <button onClick={() => setSelectedPoint(null)}>Close</button>
+        </div>
+      )}
+    </div>
+  );
+};
+
+export { ThreeDScatterPlot, PlainThreeDScatterPlot };
