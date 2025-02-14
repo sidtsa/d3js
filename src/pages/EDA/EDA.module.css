@@ -1,0 +1,14 @@
+.chatInput {
+    margin: auto;
+    padding-top: 12px;
+    padding-bottom: 24px;
+    padding-left: 24px;
+    padding-right: 24px;
+    width: 100%;
+    background: #ffffff;
+}
+
+.queryEditor {
+    padding-left: 24px;
+    padding-right: 24px;
+}

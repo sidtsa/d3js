@@ -1,0 +1,267 @@
+import { useEffect, useContext, useState } from "react";
+
+import { QuestionInput } from "../../components/QuestionInput";
+import styles from "./EDA.module.css";
+import QueryCard from "../../components/QueryCard/QueryCard";
+import { edaApi, Approaches, EdaResponse, ChatRequest, ChatTurn } from "../../api";
+import { Box, Button, CircularProgress, Grid } from "@mui/material";
+import { Card, CardContent, Divider, Tab, TabList, TabPanel, Tabs, Textarea, Typography } from "@mui/joy";
+
+const Eda = () => {
+    const [error, setError] = useState<unknown>();
+    const [isLoadingAnalysis, setIsLoadingAnalysis] = useState<boolean>(false);
+    const [isLoading, setIsLoading] = useState<boolean>(false);
+    const [answer, setAnswer] = useState<string>("");
+    const [queryBoxDisabled, setQueryBoxDisabled] = useState<boolean>(true);
+    const [tableResult, setTableResult] = useState<any>("");
+    const [answers, setAnswers] = useState<[user: string, response: EdaResponse][]>([]);
+    // const [lockContext, setLockContext] = useState<boolean>(false);
+    const [summary, setSummary] = useState<string>("");
+
+    const [chartResult, setChartResult] = useState<any>("");
+
+    const onQueryChange = (event: React.ChangeEvent<HTMLTextAreaElement>) => {
+        setAnswer(event.target.value);
+    };
+
+    const makeApiRequest = async (question: string) => {
+        // lastQuestionRef.current = question;
+        setQueryBoxDisabled(true);
+        error && setError(undefined);
+        setIsLoading(true);
+        setTableResult("");
+        setChartResult("");
+
+        try {
+            const history: ChatTurn[] = answers.map(a => ({ user: a[0], bot: a[1].answer }));
+            const request: ChatRequest = {
+                history: [{ user: question, bot: undefined }],
+                approach: Approaches.EdaAssistant,
+                overrides: {
+                    promptTemplate: "",
+                    excludeCategory: answer,
+                    top: 0,
+                    semanticRanker: false,
+                    semanticCaptions: false,
+                    suggestFollowupQuestions: false
+                }
+            };
+            const result = await edaApi(request);
+            setAnswers([[question, result]]);
+            console.log(result.answer);
+            setAnswer(result.answer);
+            makeExecuteDBApiRequest(result.answer);
+        } catch (e) {
+            setError(e);
+            console.log(e);
+            alert("Exception occured " + e);
+        } finally {
+            setIsLoading(false);
+        }
+    };
+
+    const makeExecuteDBApiRequest = async (question: string) => {
+        // lastQuestionRef.current = question;
+        setQueryBoxDisabled(true);
+        error && setError(undefined);
+        setIsLoadingAnalysis(true);
+
+        try {
+            const history: ChatTurn[] = answers.map(a => ({ user: a[0], bot: a[1].answer }));
+            const request: ChatRequest = {
+                history: [{ user: question, bot: undefined }],
+                approach: Approaches.EdaRunQuery,
+                overrides: {
+                    promptTemplate: tableResult,
+                    excludeCategory: answer,
+                    top: 0,
+                    semanticRanker: false,
+                    semanticCaptions: false,
+                    suggestFollowupQuestions: false
+                }
+            };
+            const result = await edaApi(request);
+            // setAnswers([[question, result]]);
+            // console.log(result.answer);
+            // setAnswer(result.answer);
+            setTableResult(result.tableData);
+        } catch (e) {
+            setError(e);
+            console.log(e);
+            alert("Exception occured " + e);
+        } finally {
+            setIsLoadingAnalysis(false);
+        }
+    };
+    const makeGenerateChartApiRequest = async (question: string) => {
+        // lastQuestionRef.current = question;
+        setQueryBoxDisabled(true);
+        error && setError(undefined);
+        setIsLoadingAnalysis(true);
+
+        try {
+            const history: ChatTurn[] = answers.map(a => ({ user: a[0], bot: a[1].answer }));
+            const request: ChatRequest = {
+                history: [{ user: question, bot: undefined }],
+                approach: Approaches.EdaAssistant,
+                overrides: {
+                    promptTemplate: tableResult,
+                    excludeCategory: answer,
+                    top: 0,
+                    semanticRanker: true,
+                    semanticCaptions: false,
+                    suggestFollowupQuestions: false
+                }
+            };
+            const result = await edaApi(request);
+            setAnswers([[question, result]]);
+            console.log(result.tableData);
+
+            setChartResult(result.tableData);
+        } catch (e) {
+            setError(e);
+            console.log(e);
+            alert("Exception occured " + e);
+        } finally {
+            setIsLoadingAnalysis(false);
+        }
+    };
+
+    const makeGenerateSummaryApiRequest = async (question: string) => {
+        // lastQuestionRef.current = question;
+        setQueryBoxDisabled(true);
+        error && setError(undefined);
+        setIsLoadingAnalysis(true);
+
+        try {
+            const history: ChatTurn[] = answers.map(a => ({ user: a[0], bot: a[1].answer }));
+            const request: ChatRequest = {
+                history: [{ user: question, bot: undefined }],
+                approach: Approaches.EdaAssistant,
+                overrides: {
+                    promptTemplate: tableResult,
+                    excludeCategory: answer,
+                    top: 0,
+                    semanticRanker: true,
+                    semanticCaptions: false,
+                    suggestFollowupQuestions: false
+                }
+            };
+            const result = await edaApi(request);
+            setAnswers([[question, result]]);
+            console.log(result.answer);
+            setSummary(result.answer);
+        } catch (e) {
+            setError(e);
+            console.log(e);
+            alert("Exception occured " + e);
+        } finally {
+            setIsLoadingAnalysis(false);
+        }
+    };
+
+    const onEditQueryClicked = () => {
+        setQueryBoxDisabled(false);
+    };
+
+    return (
+        <Box sx={{ my: 2 }}>
+            <Grid container spacing={0} sx={{ flexGrow: 1 }}>
+                <Grid xs={12} md={4}>
+                    <div className={styles.chatInput}>
+                        <QuestionInput
+                            clearOnSend={false}
+                            placeholder="Type a new question"
+                            disabled={isLoading}
+                            onSend={question => makeApiRequest(question)}
+                        />
+                    </div>
+                    <Card>
+                        <CardContent>
+                            <Typography level="title-lg">GPT GENERATED QUERY</Typography>
+
+                            <Tabs aria-label="Basic tabs" defaultValue={0}>
+                                <TabList>
+                                    <Tab>Query</Tab>
+                                    <Tab>Query Rules</Tab>
+                                </TabList>
+
+                                <TabPanel value={0}>
+                                    {isLoading ? (
+                                        <Box>
+                                            <CircularProgress size="md" />
+                                        </Box>
+                                    ) : (
+                                        <div>
+                                            <div
+                                                onClick={() => {
+                                                    navigator.clipboard.writeText(answer);
+                                                }}
+                                            >
+                                                <ContentCopyIcon sx={{ fontSize: 15, marginLeft: "100%", marginTop: "-2rem" }} />
+                                            </div>
+                                            <Textarea
+                                                placeholder="Get generated Query here…"
+                                                disabled={queryBoxDisabled}
+                                                onChange={onQueryChange}
+                                                sx={{ minHeight: 220, fontSize: 12, marginTop: "-1.5rem" }}
+                                                value={answer}
+                                                variant="plain"
+                                            />
+                                        </div>
+                                    )}
+
+                                    <Divider sx={{ my: 0.7 }} />
+                                    {/* <Button
+                                    disabled={answer == ""}
+                                    onClick={() => {
+                                        const textArea = document.createElement("textarea");
+                                        textArea.value = answer;
+                                        document.body.appendChild(textArea);
+                                        textArea.select();
+                                        document.execCommand("copy");
+                                        document.body.removeChild(textArea);
+                                        alert("Query copied to clipboard!");
+                                    }}
+                                    startDecorator={<ContentCopyIcon />}
+                                >
+                                    Copy Query
+                                </Button> */}
+                                    <Button variant="solid" onClick={onClickEditQuery} startDecorator={<EditIcon />}>
+                                        Edit Query
+                                    </Button>
+                                    <Button disabled={answer == ""} startDecorator={<SendIcon />} onClick={onClickExecuteQuery} sx={{ mx: 2 }}>
+                                        Execute
+                                    </Button>
+                                </TabPanel>
+                                <TabPanel value={1}>
+                                    <Box>
+                                        <b>Second</b> tab panel
+                                    </Box>
+                                </TabPanel>
+                            </Tabs>
+                        </CardContent>
+                    </Card>
+                </Grid>
+            </Grid>
+            <div className={styles.queryEditor}>
+                <QueryCard
+                    answer={answer}
+                    queryBoxDisabled={queryBoxDisabled}
+                    onClickEditQuery={onEditQueryClicked}
+                    onClickExecuteQuery={() => makeExecuteDBApiRequest(answer)}
+                    onQueryChange={onQueryChange}
+                    tableData={tableResult}
+                    makeGenerateChartApiRequest={makeGenerateChartApiRequest}
+                    chartData={chartResult}
+                    isLoading={isLoading}
+                    isLoadingAnalysis={isLoadingAnalysis}
+                    makeGenerateSummaryApiRequest={makeGenerateSummaryApiRequest}
+                    summaryData={summary}
+                />
+            </div>
+        </Box>
+    );
+};
+
+export default Eda;
