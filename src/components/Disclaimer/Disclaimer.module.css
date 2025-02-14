@@ -1,0 +1,10 @@
+.disclaimer {
+    font-weight: 400;
+    text-align: center;
+    font-size: 0.8rem;
+    font-family: "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
+    letter-spacing: 0px;
+    color: #00091b;
+    opacity: 1;
+    margin-bottom: 10px;
+}

@@ -1,0 +1,46 @@
+import * as React from "react";
+import ToggleButton from "@mui/material/ToggleButton";
+import ToggleButtonGroup from "@mui/material/ToggleButtonGroup";
+import { Box, Tooltip } from "@mui/material";
+import { Approaches } from "../../api";
+
+interface Props {
+    value: Approaches;
+    handleChange: () => void;
+}
+
+export default function CodeToggleButton({ handleChange, value }: Props) {
+    // const [catalogApproach, setCatalogApproach] = React.useState<Approaches>(Approaches.BalancedCatalog);
+
+    // const handleChange = (event: React.MouseEvent<HTMLElement>, newAlignment: Approaches) => {
+    //     setCatalogApproach(newAlignment);
+    //     console.log(newAlignment);
+    // };
+
+    return (
+        <ToggleButtonGroup color="primary" value={value} exclusive onChange={handleChange} aria-label="Platform">
+            {/* <Tooltip title="Balanced response for faster"> */}
+            
+            <ToggleButton value={Approaches.CodeGen} style={{ minWidth: "10rem" }} title="">
+                <div style={{ display: "flex", flexDirection: "column", alignItems: "center" }}>
+                    <span style={{ fontSize: "0.625rem" }}>Code</span>
+                    <span>Generation</span>
+                </div>
+            </ToggleButton>
+            <ToggleButton value={Approaches.CodeConversion} style={{ minWidth: "10rem" }} title="">
+                <div style={{ display: "flex", flexDirection: "column", alignItems: "center" }}>
+                    <span style={{ fontSize: "0.625rem" }}>Code</span>
+                    <span>Conversion</span>
+                </div>
+            </ToggleButton>
+            {/* </Tooltip> */}
+
+            <ToggleButton value={Approaches.CodeDoc} title="" style={{ minWidth: "10rem" }}>
+                <div style={{ display: "flex", flexDirection: "column", alignItems: "center" }}>
+                    <span style={{ fontSize: "0.625rem" }}>Code</span>
+                    <span>Documentation</span>
+                </div>
+            </ToggleButton>
+        </ToggleButtonGroup>
+    );
+}
