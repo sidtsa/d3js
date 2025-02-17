@@ -1,9 +1,0 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="50" height="51" viewBox="0 0 50 51">
-  <g id="Group_56410" data-name="Group 56410" transform="translate(-1830 -24)">
-    <g id="Ellipse_5" data-name="Ellipse 5" transform="translate(1830 25)" fill="none" stroke="#105185" stroke-width="1">
-      <circle cx="25" cy="25" r="25" stroke="none"/>
-      <circle cx="25" cy="25" r="24.5" fill="none"/>
-    </g>
-    <text id="P" transform="translate(1846 63)" fill="#1f5b8b" font-size="36" font-family="SegoeUI-Semibold, Segoe UI" font-weight="600"><tspan x="0" y="0">P</tspan></text>
-  </g>
-</svg>
